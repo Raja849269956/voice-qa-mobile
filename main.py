@@ -2,30 +2,34 @@ from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
-from kivy.uix.scrollview import ScrollView
+from kivy.uix.textinput import TextInput
 from kivy.clock import Clock
-from kivy.core.audio import SoundLoader
-from android.permissions import request_permissions, Permission
 import threading
-import numpy as np
-import torch
-from anthropic import Anthropic
 import os
+
+try:
+    from android.permissions import request_permissions, Permission
+    ANDROID = True
+except ImportError:
+    ANDROID = False
+
+try:
+    from anthropic import Anthropic
+except ImportError:
+    Anthropic = None
 
 class VoiceQAApp(App):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.is_listening = False
-        self.is_enrolled = False
-        self.api_key = os.getenv('ANTHROPIC_API_KEY', '')
+        self.api_key = ''
         self.client = None
         
     def build(self):
-        request_permissions([
-            Permission.RECORD_AUDIO,
-            Permission.INTERNET,
-            Permission.WRITE_EXTERNAL_STORAGE
-        ])
+        if ANDROID:
+            request_permissions([
+                Permission.INTERNET,
+                Permission.WRITE_EXTERNAL_STORAGE
+            ])
         
         layout = BoxLayout(orientation='vertical', padding=20, spacing=15)
         
@@ -45,20 +49,40 @@ class VoiceQAApp(App):
         )
         layout.add_widget(self.status_label)
         
-        self.enrollment_label = Label(
-            text='Enrollment: Not Enrolled',
-            size_hint_y=0.08,
-            font_size='14sp',
-            color=(0.96, 0.26, 0.21, 1)
+        api_key_label = Label(
+            text='API Key (get from console.anthropic.com):',
+            size_hint_y=0.06,
+            font_size='12sp'
         )
-        layout.add_widget(self.enrollment_label)
+        layout.add_widget(api_key_label)
         
-        self.accuracy_label = Label(
-            text='Voice Match: -',
+        self.api_key_input = TextInput(
+            text='',
+            hint_text='sk-ant-...',
+            multiline=False,
             size_hint_y=0.08,
+            font_size='12sp',
+            password=True
+        )
+        self.api_key_input.bind(text=self.on_api_key_change)
+        layout.add_widget(self.api_key_input)
+        
+        question_input_label = Label(
+            text='Ask a Question:',
+            size_hint_y=0.06,
+            font_size='14sp',
+            bold=True
+        )
+        layout.add_widget(question_input_label)
+        
+        self.question_input = TextInput(
+            text='',
+            hint_text='Type your question here...',
+            multiline=True,
+            size_hint_y=0.15,
             font_size='14sp'
         )
-        layout.add_widget(self.accuracy_label)
+        layout.add_widget(self.question_input)
         
         scroll_layout = BoxLayout(orientation='vertical', size_hint_y=0.5, spacing=10)
         
@@ -96,111 +120,51 @@ class VoiceQAApp(App):
         
         layout.add_widget(scroll_layout)
         
-        button_layout = BoxLayout(orientation='horizontal', size_hint_y=0.16, spacing=10)
-        
-        self.enroll_btn = Button(
-            text='🎙️ Enroll Voice',
-            background_color=(1, 0.6, 0, 1),
-            font_size='16sp',
-            bold=True
-        )
-        self.enroll_btn.bind(on_press=self.enroll_voice)
-        button_layout.add_widget(self.enroll_btn)
-        
-        self.listen_btn = Button(
-            text='▶️ Start Listening',
+        self.ask_btn = Button(
+            text='🤔 Get Answer',
             background_color=(0.3, 0.69, 0.31, 1),
-            font_size='16sp',
+            size_hint_y=0.12,
+            font_size='18sp',
             bold=True
         )
-        self.listen_btn.bind(on_press=self.toggle_listening)
-        button_layout.add_widget(self.listen_btn)
-        
-        layout.add_widget(button_layout)
-        
-        if self.api_key:
-            self.client = Anthropic(api_key=self.api_key)
-        else:
-            self.status_label.text = 'Status: API Key Missing'
-            self.status_label.color = (0.96, 0.26, 0.21, 1)
+        self.ask_btn.bind(on_press=self.ask_question)
+        self.ask_btn.disabled = True
+        layout.add_widget(self.ask_btn)
         
         return layout
     
-    def enroll_voice(self, instance):
-        self.status_label.text = 'Status: Recording for 15 seconds...'
-        self.enrollment_label.text = 'Enrollment: Recording...'
-        self.enroll_btn.disabled = True
+    def on_api_key_change(self, instance, value):
+        self.api_key = value.strip()
+        if self.api_key.startswith('sk-ant-') and len(self.api_key) > 20:
+            if Anthropic:
+                self.client = Anthropic(api_key=self.api_key)
+                self.status_label.text = 'Status: API Key Set ✓'
+                self.status_label.color = (0.3, 0.69, 0.31, 1)
+                self.ask_btn.disabled = False
+            else:
+                self.status_label.text = 'Status: Anthropic library not available'
+                self.status_label.color = (0.96, 0.26, 0.21, 1)
+        else:
+            self.status_label.text = 'Status: Enter valid API key'
+            self.status_label.color = (0.96, 0.26, 0.21, 1)
+            self.ask_btn.disabled = True
+    
+    def ask_question(self, instance):
+        question = self.question_input.text.strip()
         
-        def do_enrollment():
-            try:
-                import time
-                time.sleep(15)
-                
-                Clock.schedule_once(lambda dt: self.update_enrollment_success())
-                
-            except Exception as e:
-                Clock.schedule_once(lambda dt: self.update_enrollment_error(str(e)))
-        
-        threading.Thread(target=do_enrollment, daemon=True).start()
-    
-    def update_enrollment_success(self):
-        self.is_enrolled = True
-        self.enrollment_label.text = 'Enrollment: ✓ Enrolled'
-        self.enrollment_label.color = (0.3, 0.69, 0.31, 1)
-        self.status_label.text = 'Status: Ready to Listen'
-        self.enroll_btn.text = '🔄 Re-enroll'
-        self.enroll_btn.disabled = False
-    
-    def update_enrollment_error(self, error):
-        self.enrollment_label.text = f'Enrollment: Failed - {error}'
-        self.enroll_btn.disabled = False
-    
-    def toggle_listening(self, instance):
-        if not self.is_enrolled:
-            self.status_label.text = 'Status: Please enroll first'
+        if not question:
+            self.status_label.text = 'Status: Please enter a question'
             return
         
-        self.is_listening = not self.is_listening
-        
-        if self.is_listening:
-            self.listen_btn.text = '⏸️ Stop Listening'
-            self.listen_btn.background_color = (0.96, 0.26, 0.21, 1)
-            self.status_label.text = 'Status: 🎤 Listening...'
-            self.status_label.color = (0.3, 0.69, 0.31, 1)
-            self.start_listening()
-        else:
-            self.listen_btn.text = '▶️ Start Listening'
-            self.listen_btn.background_color = (0.3, 0.69, 0.31, 1)
-            self.status_label.text = 'Status: Stopped'
-            self.status_label.color = (0.13, 0.59, 0.95, 1)
-    
-    def start_listening(self):
-        def listen_loop():
-            while self.is_listening:
-                try:
-                    import time
-                    time.sleep(2)
-                    
-                    if self.is_listening:
-                        Clock.schedule_once(lambda dt: self.process_question())
-                    
-                except Exception as e:
-                    print(f"Listening error: {e}")
-                    break
-        
-        threading.Thread(target=listen_loop, daemon=True).start()
-    
-    def process_question(self):
         if not self.client:
             self.status_label.text = 'Status: API Key Missing'
             return
         
-        self.status_label.text = 'Status: Processing...'
+        self.status_label.text = 'Status: Getting answer...'
+        self.ask_btn.disabled = True
         
         def get_answer():
             try:
-                question = "Sample question for testing"
-                
                 message = self.client.messages.create(
                     model="claude-sonnet-4-20250514",
                     max_tokens=200,
@@ -222,10 +186,12 @@ class VoiceQAApp(App):
         self.answer_text.text = answer
         self.status_label.text = 'Status: ✓ Complete'
         self.status_label.color = (0.3, 0.69, 0.31, 1)
+        self.ask_btn.disabled = False
     
     def update_error(self, error):
         self.status_label.text = f'Status: Error - {error}'
         self.status_label.color = (0.96, 0.26, 0.21, 1)
+        self.ask_btn.disabled = False
 
 if __name__ == '__main__':
     VoiceQAApp().run()
