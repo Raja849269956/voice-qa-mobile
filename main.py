@@ -6,17 +6,14 @@ from kivy.uix.textinput import TextInput
 from kivy.clock import Clock
 import threading
 import os
+import requests
+import json
 
 try:
     from android.permissions import request_permissions, Permission
     ANDROID = True
 except ImportError:
     ANDROID = False
-
-try:
-    from anthropic import Anthropic
-except ImportError:
-    Anthropic = None
 
 class VoiceQAApp(App):
     def __init__(self, **kwargs):
@@ -136,14 +133,10 @@ class VoiceQAApp(App):
     def on_api_key_change(self, instance, value):
         self.api_key = value.strip()
         if self.api_key.startswith('sk-ant-') and len(self.api_key) > 20:
-            if Anthropic:
-                self.client = Anthropic(api_key=self.api_key)
-                self.status_label.text = 'Status: API Key Set ✓'
-                self.status_label.color = (0.3, 0.69, 0.31, 1)
-                self.ask_btn.disabled = False
-            else:
-                self.status_label.text = 'Status: Anthropic library not available'
-                self.status_label.color = (0.96, 0.26, 0.21, 1)
+            self.client = True
+            self.status_label.text = 'Status: API Key Set ✓'
+            self.status_label.color = (0.3, 0.69, 0.31, 1)
+            self.ask_btn.disabled = False
         else:
             self.status_label.text = 'Status: Enter valid API key'
             self.status_label.color = (0.96, 0.26, 0.21, 1)
@@ -165,14 +158,24 @@ class VoiceQAApp(App):
         
         def get_answer():
             try:
-                message = self.client.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=200,
-                    system="Answer in exactly 5-6 lines, be concise and direct.",
-                    messages=[{"role": "user", "content": question}]
+                response = requests.post(
+                    'https://api.anthropic.com/v1/messages',
+                    headers={
+                        'x-api-key': self.api_key,
+                        'anthropic-version': '2023-06-01',
+                        'content-type': 'application/json'
+                    },
+                    json={
+                        'model': 'claude-sonnet-4-20250514',
+                        'max_tokens': 200,
+                        'system': 'Answer in exactly 5-6 lines, be concise and direct.',
+                        'messages': [{'role': 'user', 'content': question}]
+                    },
+                    timeout=30
                 )
-                
-                answer = message.content[0].text.strip()
+                response.raise_for_status()
+                data = response.json()
+                answer = data['content'][0]['text'].strip()
                 
                 Clock.schedule_once(lambda dt: self.update_answer(question, answer))
                 

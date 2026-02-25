@@ -8,7 +8,7 @@ source.include_exts = py,png,jpg,kv,atlas
 
 version = 0.1
 
-requirements = python3,kivy,anthropic,requests,python-dotenv
+requirements = python3,kivy,requests,python-dotenv
 
 orientation = portrait
 fullscreen = 0
