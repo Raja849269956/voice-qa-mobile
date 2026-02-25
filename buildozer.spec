@@ -8,7 +8,7 @@ source.include_exts = py,png,jpg,kv,atlas
 
 version = 0.1
 
-requirements = python3,kivy,requests
+requirements = python3,hostpython3,kivy==2.3.0,requests
 
 orientation = portrait
 fullscreen = 0
@@ -22,6 +22,7 @@ android.accept_sdk_license = True
 android.archs = arm64-v8a
 
 p4a.branch = master
+p4a.bootstrap = sdl2
 
 [buildozer]
 log_level = 2
